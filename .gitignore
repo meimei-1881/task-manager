@@ -1,0 +1,7 @@
+# สร้างไฟล์ .gitignore สำหรับ Go
+echo "/bin/
+/pkg/
+.vscode/
+*.exe
+*.test
+*.out" > .gitignore
