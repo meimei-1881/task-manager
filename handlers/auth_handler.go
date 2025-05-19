@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"task-manager/auth"
 	"task-manager/database"
+	"task-manager/internal/auth"
 	"task-manager/models"
 )
 
@@ -36,16 +36,17 @@ func Login(c *gin.Context) {
 	}
 
 	// สร้าง token
-	token, err := auth.GenerateToken(dbUser.ID)
+	token, err := auth.GenerateToken(dbUser.ID, dbUser.Username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Login successful",
-		"token":   token,
-		"user_id": dbUser.ID,
+		"message":  "Login successful",
+		"token":    token,
+		"user_id":  dbUser.ID,
+		"username": dbUser.Username,
 	})
 }
 
@@ -91,4 +92,13 @@ func Register(c *gin.Context) {
 
 	log.Printf("User registered successfully: %s", user.Username)
 	c.JSON(200, gin.H{"message": "User registered successfully"})
+}
+
+func GetUsers(c *gin.Context) {
+	var users []models.User
+	if err := database.DB.Find(&users).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to fetch tasks"})
+		return
+	}
+	c.JSON(200, users)
 }

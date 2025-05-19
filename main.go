@@ -4,11 +4,13 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 	"log"
 	"os"
-	"task-manager/auth"
 	"task-manager/database"
 	"task-manager/handlers"
+	"task-manager/internal/auth"
+	"task-manager/internal/notification"
 	"task-manager/models"
 )
 
@@ -30,54 +32,100 @@ import (
 //}
 
 func main() {
-	// เชื่อมต่อ Database
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	// Initialize database
 	if err := database.Connect(); err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
 
-	// Migrate โมเดล User (สร้างตารางอัตโนมัติ)
-	if err := database.DB.AutoMigrate(&models.Task{}, &models.User{}); err != nil { // <-- ต้องมีบรรทัดนี้
+	// Run database migrations
+	if err := migrateDatabase(database.DB); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
-	// โหลดค่าจาก .env
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+	// Initialize notification hub
+	hub := notification.NewHub()
+	go hub.Run() // Start hub in background
 
+	// Initialize handlers
+	wsHandler := notification.NewWSHandler(hub)
+	notiHandler := handlers.NewNotificationHandler(database.DB, hub)
+	taskHandler := handlers.NewTaskHandler(hub, notiHandler)
+
+	// Setup router
+	r := setupRouter(hub, wsHandler, taskHandler, notiHandler)
+
+	// Start server
 	port := os.Getenv("API_PORT")
-
-	r := gin.Default()
-	// ตั้งค่า CORS middleware
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:4200"},                   // กำหนด URL ที่อนุญาตให้เชื่อมต่อ
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},            // กำหนดวิธีการ HTTP ที่อนุญาต
-		AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"}, // ⚠️ ต้องมี Authorization
-		AllowCredentials: true,                                                // ให้อนุญาต Cookies ในคำร้อง
-	}))
-
-	r.POST("/register", handlers.Register) // <-- เพิ่มบรรทัดนี้
-	r.POST("/login", handlers.Login)
-
-	api := r.Group("/api")
-
-	api.Use(auth.GinAuthMiddleware()) // <-- เรียกใช้แบบนี้
-	{
-		api.GET("/tasks", handlers.GetTasks)
-		api.POST("/tasks", handlers.CreateTask)
-		api.PUT("/tasks/:id", handlers.UpdateTask)
-		api.DELETE("/tasks/:id", handlers.DeleteTask)
-	}
-
 	if port == "" {
-		port = "8080" // ค่า default เมื่อไม่ได้ตั้งค่า API_PORT ใน environment
+		port = "8080"
 	}
-	r.Run(":" + port) // ต้องมี colon (:) นำหน้าหมายเลขพอร์ต}
+	log.Printf("Server starting on port %s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
 }
 
-//func getTasks(c *gin.Context) {
-//	c.JSON(200, gin.H{
-//		"tasks": []string{"task1", "task2"},
-//	})
-//}
+func migrateDatabase(db *gorm.DB) error {
+	return db.AutoMigrate(
+		&models.Task{},
+		&models.User{},
+		&models.Notification{},
+		&models.NotificationRecipient{},
+	)
+}
+
+func setupRouter(
+	hub *notification.Hub,
+	wsHandler *notification.WSHandler,
+	taskHandler *handlers.TaskHandler,
+	notiHandler *handlers.NotificationHandler,
+
+) *gin.Engine {
+	r := gin.Default()
+
+	// CORS configuration
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:4200"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
+		AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"},
+		AllowCredentials: true,
+	}))
+
+	// WebSocket route
+	r.GET("/ws", func(c *gin.Context) {
+		wsHandler.HandleConnection(c.Writer, c.Request)
+	})
+
+	// Public routes
+	r.POST("/register", handlers.Register)
+	r.POST("/login", handlers.Login)
+
+	// Authenticated routes
+	api := r.Group("/api")
+	api.Use(auth.GinAuthMiddleware())
+	{
+		// Task routes
+		api.GET("/tasks", handlers.GetTasks)
+		api.POST("/tasks", handlers.CreateTask)
+		api.PUT("/tasks/:id", taskHandler.UpdateTask)
+		api.GET("/tasks/:id", handlers.GetTaskByID)
+		api.DELETE("/tasks/:id", handlers.DeleteTask)
+
+		// User routes
+		api.GET("/users", handlers.GetUsers)
+
+		// Notification routes
+		api.GET("/notifications", handlers.GetNotifications)
+		api.GET("/notifications/:id", handlers.GetNotificationByID)
+		api.DELETE("/notifications/:id", handlers.DeleteNotification)
+		api.PUT("/notifications/:id/mark-read", handlers.MarkNotificationAsRead)
+		api.PUT("/notifications/mark-all-read", handlers.MarkAllAsRead)
+	}
+
+	return r
+}

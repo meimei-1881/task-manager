@@ -4,7 +4,6 @@ package auth
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -46,20 +45,34 @@ func GinAuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Debug: Log all claims
-		log.Printf("Token Claims: %+v", claims)
+		//log.Printf("Token Claims: %+v", claims)
 
-		// ตรวจสอบทั้ง userID และ user_id (เพื่อความเข้ากันได้)
-		userID, exists := claims["user_id"]
-		if !exists {
-			userID, exists = claims["userID"]
+		// ดึง userID (รองรับทั้งรูปแบบ snake_case และ camelCase)
+		var userID uint
+		if val, exists := claims["user_id"]; exists {
+			userID = uint(val.(float64))
+		} else if val, exists := claims["userID"]; exists {
+			userID = uint(val.(float64))
+		} else {
+			c.JSON(401, gin.H{"error": "User ID not found in token"})
+			c.Abort()
+			return
 		}
 
-		if exists {
-			if userIDFloat, ok := userID.(float64); ok {
-				c.Set("userID", uint(userIDFloat))
-				c.Next()
-				return
-			}
+		// ดึง username
+		username, ok := claims["username"].(string)
+		if !ok {
+			c.JSON(401, gin.H{"error": "Username not found in token"})
+			c.Abort()
+			return
+		}
+
+		if ok {
+			// ตั้งค่าใน context
+			c.Set("userID", userID)
+			c.Set("username", username)
+			c.Next()
+			return
 		}
 
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing or invalid user ID in claims"})

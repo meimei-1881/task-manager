@@ -7,9 +7,15 @@ type Task struct {
 	gorm.Model
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Status      string `json:"status"`
+	Status      string `json:"status" gorm:"default:'todo'"`
+	Priority    string `json:"priority" gorm:"default:'medium'"`
 
-	CreatedByID  uint `json:"created_by_id"`  // ID ของคนสร้าง
-	UpdatedByID  uint `json:"updated_by_id"`  // ID ของคนแก้ไขล่าสุด
-	AssignedToID uint `json:"assigned_to_id"` // ID ของคนแก้ไขล่าสุด
+	CreatedBy   User `json:"created_by" gorm:"foreignKey:CreatedByID"`
+	CreatedByID uint `json:"created_by_id"`
+
+	UpdatedBy   User `json:"updated_by" gorm:"foreignKey:UpdatedByID"`
+	UpdatedByID uint `json:"updated_by_id"`
+
+	AssignedTo   User `json:"assigned_to" gorm:"foreignKey:AssignedToID"`
+	AssignedToID uint `json:"assigned_to_id"`
 }
